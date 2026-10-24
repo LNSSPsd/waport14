@@ -5,9 +5,9 @@ A porting suite that runs **WhatsApp 26.41.74** (built for iOS 15.1 and later on
 keeps the original bundle ID and entitlements, so push notifications keep working.
 Developed and tested on iOS 14.3, arm64e.
 
-On iOS 14.3 WhatsApp registers, logs in, and shows the chat list and chats. Some screens
-still crash; [the WhatsApp notes](profiles/net.whatsapp.WhatsApp/NOTES.md) list what's known
-not to work yet.
+On iOS 14.3 WhatsApp registers, logs in, and shows the chat list and chats. Some screens may
+still crash: [the WhatsApp notes](profiles/net.whatsapp.WhatsApp/NOTES.md) list the iOS 15
+APIs that aren't implemented yet.
 
 <p align="center">
 <img src="screenshots/welcome.jpg" width="24%" alt="Welcome screen">
@@ -36,7 +36,7 @@ The app loads, and every import it makes resolves to *something*:
 - a **trap**: an API that iOS 14 doesn't have and the shim doesn't implement yet. A trap
   writes the symbol name and a backtrace to `waport.log`, then aborts
 
-So a screen that uses a trapped API crashes, and the log names the API. Continuing the port
+So a screen that reaches a trapped API may crash, and the log names the API. Continuing the port
 means: install, use it, read the log, implement the trapped API in `src/` (or in the
 WhatsApp profile, if it's specific to WhatsApp), and rebuild.
 

@@ -41,7 +41,8 @@ AVFAudio → AVFoundation (116), `SwiftNativeNSObject`, `swift_getFunctionTypeMe
 Works on iOS 14.3 (tested with the diagnostic build): launch, registration
 (phone number, profile name, two-step verification), chat list, chats.
 
-Known gaps, crash when reached (each logs a `TRAP` naming the API):
+Not implemented yet; a screen that reaches one of these may crash (and logs a `TRAP` naming
+the API):
 
 - UIKit `UIButton.Configuration` (about 60 call sites), cell `configurationUpdateHandler`,
   list separator configuration
