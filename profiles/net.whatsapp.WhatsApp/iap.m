@@ -33,6 +33,8 @@ static void replaceTableEntry(const char *what, uintptr_t slot, uintptr_t expect
 }
 
 __attribute__((constructor)) static void disableIAPStartup(void) {
+    // the table offset is the main app's (extensions load the shim too)
+    if (![[[NSBundle mainBundle] bundleIdentifier] isEqualToString:@"net.whatsapp.WhatsApp"]) return;
     Class c = objc_getClass("IAPStartupCoordinator");
     const char *sels[] = {"registerAll", "reactivateAfterAccountSwitch"};
     for (size_t i = 0; i < sizeof sels / sizeof *sels; i++) {
