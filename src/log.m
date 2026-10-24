@@ -301,6 +301,13 @@ static void logAllThreads(unsigned t) {
     }
 }
 
+static double footprintMB(void) {
+    task_vm_info_data_t vi = {0};
+    mach_msg_type_number_t vc = TASK_VM_INFO_COUNT;
+    task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vi, &vc);
+    return vi.phys_footprint / 1048576.;
+}
+
 static void startWatchdog(void) {
     mainThread = mach_thread_self();
     // lifecycle: a process that dies without a signal (SIGKILL by launch watchdog/jetsam, or
@@ -322,6 +329,13 @@ static void startWatchdog(void) {
     // app extensions have small memory limits (jetsam kills without a signal): every second
     // at first, with the footprint jetsam counts
     BOOL appex = [[[NSBundle mainBundle] bundlePath] hasSuffix:@".appex"];
+    if (appex)
+        [NSThread detachNewThreadWithBlock:^{
+            for (int i = 1; i <= 15; i++) {
+                usleep(200000);
+                waport_log([NSString stringWithFormat:@"footprint %.1f MB at %d ms", footprintMB(), i * 200]);
+            }
+        }];
     [NSThread detachNewThreadWithBlock:^{
         uint64_t sent = 0;
         unsigned stalled = 0;
@@ -332,11 +346,8 @@ static void startWatchdog(void) {
                 struct task_basic_info_64 ti;
                 mach_msg_type_number_t c = TASK_BASIC_INFO_64_COUNT;
                 task_info(mach_task_self(), TASK_BASIC_INFO_64, (task_info_t)&ti, &c);
-                task_vm_info_data_t vi = {0};
-                mach_msg_type_number_t vc = TASK_VM_INFO_COUNT;
-                task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vi, &vc);
                 waport_log([NSString stringWithFormat:@"alive %us, resident %llu MB, footprint %.1f MB%@", t,
-                            (unsigned long long)ti.resident_size >> 20, vi.phys_footprint / 1048576.,
+                            (unsigned long long)ti.resident_size >> 20, footprintMB(),
                             stalled ? @", main stalled" : @""]);
             }
             if (mainPong == sent) {
@@ -367,8 +378,8 @@ static void traceNotificationService(void) {
     method_setImplementation(m, imp_implementationWithBlock(^(id self, id request, void (^handler)(id)) {
         id content = [request valueForKey:@"content"];
         NSDictionary *info = [content valueForKey:@"userInfo"];
-        waport_log([NSString stringWithFormat:@"notification service: request %@, payload keys %@",
-                    [request valueForKey:@"identifier"], [[info allKeys] componentsJoinedByString:@","]]);
+        waport_log([NSString stringWithFormat:@"notification service: request %@, payload keys %@, footprint %.1f MB",
+                    [request valueForKey:@"identifier"], [[info allKeys] componentsJoinedByString:@","], footprintMB()]);
         void (^h)(id) = handler;
         orig(self, rs, request, ^(id result) {
             waport_log([NSString stringWithFormat:@"notification service: content handler, title %lu chars, body %lu chars",
