@@ -212,8 +212,9 @@ static void uikit(void) {
         return [UIColor colorWithRed:0 green:199 / 255. blue:190 / 255. alpha:1];
     });
 
-    // UIButton configuration API: no UIButtonConfiguration on 14, so configurations are
-    // always nil; buttons keep whatever the legacy setters gave them.
+    // UIButton configuration API: no UIButtonConfiguration on 14, so ObjC configurations are
+    // always nil; buttons keep whatever the legacy setters gave them. (Swift's
+    // UIButton.Configuration is implemented in overlays.swift.)
     add("UIButton", YES, "buttonWithConfiguration:primaryAction:", "@@:@@", ^id(id cls, id cfg, UIAction *a) {
         return [cls buttonWithType:UIButtonTypeSystem primaryAction:a];
     });
