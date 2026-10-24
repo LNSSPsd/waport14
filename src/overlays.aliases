@@ -1,0 +1,20 @@
+# ld64 -alias_list for overlays.swift: "<our symbol> <overlay symbol it also exports as>".
+# For members @_silgen_name can't name (types' metadata accessors and nominal type descriptors,
+# inits, getters, enum case tags). Descriptors (`Mn`) are data imports: never trapped, a missing
+# one is a null weak import (mangle.m logs `missing type`), so list them for every type
+# here. Check each pair's signature in -emit-ir against a reference calling the real API.
+
+# Foundation: NotificationCenter.Notifications.Iterator
+_$s11WaportSwift0A21NotificationsIteratorVMa _$sSo20NSNotificationCenterC10FoundationE13NotificationsC8IteratorVMa
+
+# os: OSSignposter, OSSignpostIntervalState, OSSignpostError
+_$s11WaportSwift0A10SignposterVMa _$s2os12OSSignposterVMa
+_$s11WaportSwift0A10SignposterVMn _$s2os12OSSignposterVMn
+_$s11WaportSwift0A10SignposterV9logHandleSo06OS_os_D0Cvg _$s2os12OSSignposterV9logHandleSo03OS_a1_C0Cvg
+_$s11WaportSwift0A10SignposterV9subsystem8categoryACSS_So9OS_os_logC0G0E8CategoryVtcfC _$s2os12OSSignposterV9subsystem8categoryACSS_So03OS_A4_logCAAE8CategoryVtcfC
+_$s11WaportSwift0A21SignpostIntervalStateCMa _$s2os23OSSignpostIntervalStateCMa
+_$s11WaportSwift0A21SignpostIntervalStateCMn _$s2os23OSSignpostIntervalStateCMn
+_$s11WaportSwift0A21SignpostIntervalStateC2id6isOpenAC2os12OSSignpostIDV_Sbtcfc _$s2os23OSSignpostIntervalStateC2id6isOpenAcA0B2IDV_Sbtcfc
+_$s11WaportSwift0A21SignpostIntervalStateC10signpostID2os010OSSignpostG0Vvg _$s2os23OSSignpostIntervalStateC10signpostIDAA0bF0Vvg
+_$s11WaportSwift0A13SignpostErrorOMa _$s2os15OSSignpostErrorOMa
+_$s11WaportSwift0A13SignpostErrorO9doubleEndyA2CmFWC _$s2os15OSSignpostErrorO9doubleEndyA2CmFWC

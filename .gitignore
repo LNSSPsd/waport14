@@ -1,0 +1,7 @@
+work/
+*.ipa
+*.tipa
+__pycache__/
+bin/
+waport.log
+CLAUDE.md
