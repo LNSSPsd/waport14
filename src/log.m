@@ -12,6 +12,8 @@
 #include <signal.h>
 #include <sys/ucontext.h>
 #include <mach/mach.h>
+#include <mach-o/dyld.h>
+#include <mach-o/loader.h>
 #include <pthread.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -362,6 +364,54 @@ static void startWatchdog(void) {
     }];
 }
 
+// Dirty memory by owner (image segments, else VM tag): what makes up the footprint
+static void logMemoryMap(NSString *label) {
+    struct range { uintptr_t lo, hi; const char *name; };
+    uint32_t n = _dyld_image_count();
+    struct range *r = calloc(n * 8, sizeof *r);
+    size_t nr = 0;
+    for (uint32_t i = 0; i < n; i++) {
+        const struct mach_header_64 *h = (const void *)_dyld_get_image_header(i);
+        intptr_t slide = _dyld_get_image_vmaddr_slide(i);
+        const char *path = _dyld_get_image_name(i), *base = strrchr(path, '/');
+        const struct load_command *lc = (const void *)(h + 1);
+        for (uint32_t c = 0; c < h->ncmds && nr < n * 8; c++, lc = (const void *)((const char *)lc + lc->cmdsize)) {
+            if (lc->cmd != LC_SEGMENT_64) continue;
+            const struct segment_command_64 *sg = (const void *)lc;
+            if (!sg->vmsize || !strcmp(sg->segname, "__PAGEZERO")) continue;
+            r[nr++] = (struct range){sg->vmaddr + slide, sg->vmaddr + slide + sg->vmsize, base ? base + 1 : path};
+        }
+    }
+    NSMutableDictionary<NSString *, NSNumber *> *kb = [NSMutableDictionary dictionary];
+    vm_address_t addr = 0;
+    natural_t depth = 0;
+    for (;;) {
+        vm_size_t size = 0;
+        vm_region_submap_info_data_64_t info;
+        mach_msg_type_number_t cnt = VM_REGION_SUBMAP_INFO_COUNT_64;
+        if (vm_region_recurse_64(mach_task_self(), &addr, &size, &depth, (vm_region_recurse_info_t)&info, &cnt))
+            break;
+        if (info.is_submap) { depth++; continue; }
+        if (info.share_mode != SM_SHARED && info.share_mode != SM_TRUESHARED && info.share_mode != SM_EMPTY) {
+            uint64_t dirty = (uint64_t)(info.pages_dirtied + info.pages_swapped_out) * vm_page_size;
+            if (dirty) {
+                NSString *owner = nil;
+                for (size_t i = 0; i < nr && !owner; i++)
+                    if (addr < r[i].hi && addr + size > r[i].lo) owner = @(r[i].name);
+                if (!owner) owner = [NSString stringWithFormat:@"tag %u", info.user_tag];
+                kb[owner] = @(kb[owner].unsignedLongLongValue + (dirty >> 10));
+            }
+        }
+        addr += size;
+    }
+    free(r);
+    NSArray *keys = [kb keysSortedByValueUsingComparator:^NSComparisonResult(NSNumber *a, NSNumber *b) { return [b compare:a]; }];
+    NSMutableString *out = [NSMutableString stringWithFormat:@"memory %@: footprint %.1f MB, dirty KB by owner (tags: 1 malloc, 2 small, 3 large, 7 tiny, 11 nano, 30 stack):",
+                                                           label, footprintMB()];
+    for (NSUInteger i = 0; i < keys.count && i < 25; i++) [out appendFormat:@"\n  %6llu %@", kb[keys[i]].unsignedLongLongValue, keys[i]];
+    waport_log(out);
+}
+
 // Notification service extension lifecycle: the request, the content handler call, the
 // time-limit callback (an extension that dies silently shows how far it got)
 static void traceNotificationService(void) {
@@ -380,6 +430,7 @@ static void traceNotificationService(void) {
         NSDictionary *info = [content valueForKey:@"userInfo"];
         waport_log([NSString stringWithFormat:@"notification service: request %@, payload keys %@, footprint %.1f MB",
                     [request valueForKey:@"identifier"], [[info allKeys] componentsJoinedByString:@","], footprintMB()]);
+        logMemoryMap(@"at request");
         void (^h)(id) = handler;
         orig(self, rs, request, ^(id result) {
             waport_log([NSString stringWithFormat:@"notification service: content handler, title %lu chars, body %lu chars",
@@ -406,8 +457,8 @@ void waport_install_diagnostics(void) {
     installSignalHandlers();
     prevPreprocessor = objc_setExceptionPreprocessor(onThrow);
     startWatchdog();
-    waport_log([NSString stringWithFormat:@"=== launch %@ (%@) waport build " WAPORT_BUILD, [[NSBundle mainBundle] bundleIdentifier],
-                [[NSProcessInfo processInfo] operatingSystemVersionString]]);
+    waport_log([NSString stringWithFormat:@"=== launch %@ (%@) waport build " WAPORT_BUILD ", footprint %.1f MB",
+                [[NSBundle mainBundle] bundleIdentifier], [[NSProcessInfo processInfo] operatingSystemVersionString], footprintMB()]);
     waport_install_cxx();
     for (int meta = 0; meta < 2; meta++) {
         Class c = meta ? object_getClass([NSObject class]) : [NSObject class];
