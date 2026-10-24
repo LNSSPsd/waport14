@@ -319,18 +319,25 @@ static void startWatchdog(void) {
         waport_log([NSString stringWithFormat:@"exit() called\n%@",
                     [[NSThread callStackSymbols] componentsJoinedByString:@"\n"]]);
     });
+    // app extensions have small memory limits (jetsam kills without a signal): every second
+    // at first, with the footprint jetsam counts
+    BOOL appex = [[[NSBundle mainBundle] bundlePath] hasSuffix:@".appex"];
     [NSThread detachNewThreadWithBlock:^{
         uint64_t sent = 0;
         unsigned stalled = 0;
         for (unsigned t = 1;; t++) {
             sleep(1);
             if (t == 10 || t == 17) logAllThreads(t);
-            if (t <= 120 ? t % 5 == 0 : t % 60 == 0) {
+            if ((appex && t < 5) || (t <= 120 ? t % 5 == 0 : t % 60 == 0)) {
                 struct task_basic_info_64 ti;
                 mach_msg_type_number_t c = TASK_BASIC_INFO_64_COUNT;
                 task_info(mach_task_self(), TASK_BASIC_INFO_64, (task_info_t)&ti, &c);
-                waport_log([NSString stringWithFormat:@"alive %us, resident %llu MB%@", t,
-                            (unsigned long long)ti.resident_size >> 20, stalled ? @", main stalled" : @""]);
+                task_vm_info_data_t vi = {0};
+                mach_msg_type_number_t vc = TASK_VM_INFO_COUNT;
+                task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vi, &vc);
+                waport_log([NSString stringWithFormat:@"alive %us, resident %llu MB, footprint %.1f MB%@", t,
+                            (unsigned long long)ti.resident_size >> 20, vi.phys_footprint / 1048576.,
+                            stalled ? @", main stalled" : @""]);
             }
             if (mainPong == sent) {
                 if (stalled) waport_log([NSString stringWithFormat:@"main thread answered after %us", stalled]);
@@ -342,6 +349,42 @@ static void startWatchdog(void) {
             }
         }
     }];
+}
+
+// Notification service extension lifecycle: the request, the content handler call, the
+// time-limit callback (an extension that dies silently shows how far it got)
+static void traceNotificationService(void) {
+    NSDictionary *ext = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"NSExtension"];
+    if (![ext[@"NSExtensionPointIdentifier"] isEqual:@"com.apple.usernotifications.service"]) return;
+    Class c = NSClassFromString(ext[@"NSExtensionPrincipalClass"]);
+    SEL rs = sel_registerName("didReceiveNotificationRequest:withContentHandler:");
+    Method m = c ? class_getInstanceMethod(c, rs) : NULL;
+    if (!m) {
+        waport_log([NSString stringWithFormat:@"notification service %@: no %s", ext[@"NSExtensionPrincipalClass"], sel_getName(rs)]);
+        return;
+    }
+    void (*orig)(id, SEL, id, id) = (void *)method_getImplementation(m);
+    method_setImplementation(m, imp_implementationWithBlock(^(id self, id request, void (^handler)(id)) {
+        id content = [request valueForKey:@"content"];
+        NSDictionary *info = [content valueForKey:@"userInfo"];
+        waport_log([NSString stringWithFormat:@"notification service: request %@, payload keys %@",
+                    [request valueForKey:@"identifier"], [[info allKeys] componentsJoinedByString:@","]]);
+        void (^h)(id) = handler;
+        orig(self, rs, request, ^(id result) {
+            waport_log([NSString stringWithFormat:@"notification service: content handler, title %lu chars, body %lu chars",
+                        (unsigned long)[[result valueForKey:@"title"] length], (unsigned long)[[result valueForKey:@"body"] length]]);
+            h(result);
+        });
+    }));
+    SEL es = sel_registerName("serviceExtensionTimeWillExpire");
+    Method em = class_getInstanceMethod(c, es);
+    if (em) {
+        void (*eorig)(id, SEL) = (void *)method_getImplementation(em);
+        method_setImplementation(em, imp_implementationWithBlock(^(id self) {
+            waport_log(@"notification service: time will expire");
+            eorig(self, es);
+        }));
+    }
 }
 
 void waport_install_diagnostics(void) {
@@ -366,6 +409,7 @@ void waport_install_diagnostics(void) {
     }
     prevHandler = NSGetUncaughtExceptionHandler();
     NSSetUncaughtExceptionHandler(onUncaught);
+    traceNotificationService();
 }
 #else
 void waport_install_diagnostics(void) {}
