@@ -466,3 +466,199 @@ extension UIButton {
         self.waportConfiguration = waportConfiguration
     }
 }
+
+// Foundation (15): URLSession.bytes(for:delegate:), the response body as an AsyncSequence of
+// bytes. iOS 14 has no per-task delegates, so the request runs in a private session with the
+// caller's configuration (a background one: ephemeral) and our data delegate; auth challenges
+// go to the per-task delegate, else the original session's delegate. The app inlines the
+// iterator's next() over the @frozen _AsyncBytesBuffer (storage, next/end pointer): it reads
+// bytes between the pointers and calls reloadBufferAndNext() when they meet, which waits for
+// the next received chunk. The task is cancelled once the sequence and its iterators are gone.
+final class WaportByteStream: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+    let lock = NSLock()
+    weak var original: URLSession?
+    let taskDelegate: URLSessionTaskDelegate?
+    var task: URLSessionDataTask!
+    var chunks: [Data] = []
+    var finished = false
+    var error: Error?
+    var waiter: CheckedContinuation<Void, Never>?
+    var responseWaiter: CheckedContinuation<URLResponse, Error>?
+
+    init(original: URLSession, taskDelegate: URLSessionTaskDelegate?) {
+        self.original = original
+        self.taskDelegate = taskDelegate
+    }
+
+    func wake() {
+        lock.lock()
+        let w = waiter
+        waiter = nil
+        lock.unlock()
+        w?.resume()
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
+                    completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+        lock.lock()
+        let r = responseWaiter
+        responseWaiter = nil
+        lock.unlock()
+        r?.resume(returning: response)
+        completionHandler(.allow)
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        guard !data.isEmpty else { return }
+        lock.lock()
+        chunks.append(data)
+        lock.unlock()
+        wake()
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        lock.lock()
+        finished = true
+        self.error = error
+        let r = responseWaiter
+        responseWaiter = nil
+        lock.unlock()
+        r?.resume(throwing: error ?? URLError(.badServerResponse))
+        wake()
+        session.finishTasksAndInvalidate()
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge,
+                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        let s = original ?? session
+        if let d = taskDelegate, d.responds(to: #selector(URLSessionTaskDelegate.urlSession(_:task:didReceive:completionHandler:))) {
+            d.urlSession?(s, task: task, didReceive: challenge, completionHandler: completionHandler)
+        } else if let d = original?.delegate,
+                  challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust
+                      || challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodClientCertificate,
+                  d.responds(to: #selector(URLSessionDelegate.urlSession(_:didReceive:completionHandler:))) {
+            d.urlSession?(s, didReceive: challenge, completionHandler: completionHandler)
+        } else if let d = original?.delegate as? URLSessionTaskDelegate,
+                  d.responds(to: #selector(URLSessionTaskDelegate.urlSession(_:task:didReceive:completionHandler:))) {
+            d.urlSession?(s, task: task, didReceive: challenge, completionHandler: completionHandler)
+        } else {
+            completionHandler(.performDefaultHandling, nil)
+        }
+    }
+
+    // the next received chunk, nil at the end of the body
+    func nextChunk() async throws -> Data? {
+        while true {
+            lock.lock()
+            if !chunks.isEmpty {
+                let d = chunks.removeFirst()
+                lock.unlock()
+                return d
+            }
+            if finished {
+                let e = error
+                lock.unlock()
+                if let e = e { throw e }
+                return nil
+            }
+            lock.unlock()
+            await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+                lock.lock()
+                if chunks.isEmpty && !finished {
+                    waiter = c
+                    lock.unlock()
+                } else {
+                    lock.unlock()
+                    c.resume()
+                }
+            }
+        }
+    }
+}
+
+// _AsyncBytesBuffer.storage: owns the chunk the pointers point into
+final class WaportByteStorage {
+    let stream: WaportByteStream
+    var bytes: UnsafeMutableRawPointer
+
+    init(_ stream: WaportByteStream) {
+        self.stream = stream
+        bytes = .allocate(byteCount: 1, alignment: 1)
+    }
+
+    func hold(_ d: Data) -> UnsafeMutableRawPointer {
+        bytes.deallocate()
+        bytes = .allocate(byteCount: d.count, alignment: 1)
+        d.copyBytes(to: bytes.assumingMemoryBound(to: UInt8.self), count: d.count)
+        return bytes
+    }
+
+    deinit {
+        stream.task.cancel()
+        bytes.deallocate()
+    }
+}
+
+@frozen public struct WaportAsyncBytesBuffer {
+    var storage: AnyObject?
+    var nextPointer: UnsafeMutableRawPointer
+    var endPointer: UnsafeMutableRawPointer
+
+    @_silgen_name("$s10Foundation17_AsyncBytesBufferV06reloadD7AndNexts5UInt8VSgyYaKF")
+    public mutating func waportReloadBufferAndNext() async throws -> UInt8? {
+        guard let s = storage as? WaportByteStorage else { return nil }
+        let task = s.stream.task!
+        let chunk = try await withTaskCancellationHandler {
+            try await s.stream.nextChunk()
+        } onCancel: {
+            task.cancel()
+        }
+        guard let d = chunk else { return nil }
+        let p = s.hold(d)
+        nextPointer = p + 1
+        endPointer = p + d.count
+        return p.load(as: UInt8.self)
+    }
+}
+
+// URLSession.AsyncBytes.Iterator (@frozen: only its layout matters)
+@frozen public struct WaportURLAsyncBytesIterator {
+    var buffer: WaportAsyncBytesBuffer
+}
+
+// URLSession.AsyncBytes (metadata accessor, task getter: overlays.aliases)
+public struct WaportURLAsyncBytes {
+    let storage: WaportByteStorage
+
+    public var task: URLSessionDataTask { storage.stream.task }
+
+    @_silgen_name("$sSo12NSURLSessionC10FoundationE10AsyncBytesV04makeC8IteratorAE0F0VyF")
+    public func waportMakeAsyncIterator() -> WaportURLAsyncBytesIterator {
+        WaportURLAsyncBytesIterator(buffer: WaportAsyncBytesBuffer(storage: storage, nextPointer: storage.bytes,
+                                                                   endPointer: storage.bytes))
+    }
+}
+
+extension URLSession {
+    @_silgen_name("$sSo12NSURLSessionC10FoundationE5bytes3for8delegateAbCE10AsyncBytesV_So13NSURLResponseCtAC10URLRequestV_So0A12TaskDelegate_pSgtYaKF")
+    public func waportBytes(for request: URLRequest, delegate: URLSessionTaskDelegate?) async throws
+        -> (WaportURLAsyncBytes, URLResponse) {
+        let stream = WaportByteStream(original: self, taskDelegate: delegate)
+        let config = configuration.identifier == nil ? configuration : .ephemeral
+        let session = URLSession(configuration: config, delegate: stream, delegateQueue: nil)
+        let task = session.dataTask(with: request)
+        stream.task = task
+        let storage = WaportByteStorage(stream)
+        let response = try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (c: CheckedContinuation<URLResponse, Error>) in
+                stream.lock.lock()
+                stream.responseWaiter = c
+                stream.lock.unlock()
+                task.resume()
+            }
+        } onCancel: {
+            task.cancel()
+        }
+        return (WaportURLAsyncBytes(storage: storage), response)
+    }
+}
