@@ -9,6 +9,13 @@ On iOS 14.3 WhatsApp registers, logs in, and shows the chat list and chats. Some
 still crash; [the WhatsApp notes](profiles/net.whatsapp.WhatsApp/NOTES.md) list what's known
 not to work yet.
 
+<p align="center">
+<img src="screenshots/welcome.jpg" width="24%" alt="Welcome screen">
+<img src="screenshots/chat.jpg" width="24%" alt="A chat with text, a photo and a sticker">
+<img src="screenshots/profile.jpg" width="24%" alt="The You tab">
+<img src="screenshots/about.jpg" width="24%" alt="About: version 2.26.41.74">
+</p>
+
 This is a first step in backporting, not a general-purpose patcher. Much of the code doesn't
 depend on WhatsApp and is kept separate from the WhatsApp-specific parts
 (`profiles/net.whatsapp.WhatsApp/`), but it has only been tested with this one app and
@@ -99,6 +106,7 @@ Diagnostic builds set `UIFileSharingEnabled`, so the log is in **Files → On My
 | `tools/scan_objc.py` | iOS 15.0–15.1 ObjC methods an app may call unguarded (analysis) |
 | `tools/callsites.py` | approximate call sites per import (analysis) |
 | `src/` | the shim, `libwaport.dylib` (see `src/build-shim.sh`) |
+| `screenshots/` | WhatsApp 26.41.74 on iOS 14.3 |
 | `profiles/net.whatsapp.WhatsApp/` | WhatsApp-specific: `profile.json`, `NOTES.md`, extra shim sources (`*.m`) |
 
 ## License
