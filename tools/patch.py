@@ -387,6 +387,20 @@ def main():
         plistlib.dump(d, open(pl, 'wb'), fmt=plistlib.FMT_BINARY if raw[:6] == b'bplist' else plistlib.FMT_XML)
         report.append('Info.plist: UIFileSharingEnabled (diagnostic build)')
 
+    # app extensions may raise their jetsam limit (src/memlimit.m): 14's dyld dirties every
+    # bound data page at load, so extensions linking an app's big frameworks start near it
+    for p in images:
+        if os.path.dirname(p).endswith('.appex') and os.path.basename(p) == \
+                os.path.splitext(os.path.basename(os.path.dirname(p)))[0]:
+            if p not in ents:
+                ents[p] = os.path.join(work, 'ents', os.path.relpath(p, app).replace('/', '__') + '.plist')
+                os.makedirs(os.path.dirname(ents[p]), exist_ok=True)
+                plistlib.dump({}, open(ents[p], 'wb'))
+            d = plistlib.loads(open(ents[p], 'rb').read())
+            if not d.get('com.apple.private.memorystatus'):
+                d['com.apple.private.memorystatus'] = True
+                plistlib.dump(d, open(ents[p], 'wb'))
+                report.append(f'{os.path.relpath(p, app)}: + com.apple.private.memorystatus')
     for p in images + [os.path.join(fw, 'libwaport.dylib'), os.path.join(fw, 'libswift_Concurrency.dylib')]:
         ldid('-S' + ents[p] if p in ents else '-S', p)
     report.append(f're-signed {len(images) + 2} images (ldid), {len(ents)} with their original entitlements')

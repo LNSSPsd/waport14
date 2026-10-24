@@ -12,6 +12,7 @@
 
 __attribute__((visibility("hidden"))) void waport_log(NSString *msg);
 __attribute__((visibility("hidden"))) void waport_install_diagnostics(void);
+__attribute__((visibility("hidden"))) int waport_memlimit(void);
 
 #if WAPORT_LOG
 #define shimlog(...) waport_log([NSString stringWithFormat:__VA_ARGS__])

@@ -11,7 +11,7 @@ already pointer format 2.
 | `Frameworks/SharedModules.framework` | 80 MB core, used by the app and every appex |
 | `Frameworks/PsiphonTunnel.framework` | dlopen'd (censorship-circumvention proxy) |
 | `Frameworks/CommonLibrary.framework` | classic binds, min 13.0, India UPI payments |
-| `PlugIns/ServiceExtension.appex` | notification service: decrypts pushes. **Matters for message notifications** |
+| `PlugIns/ServiceExtension.appex` | notification service: decrypts pushes. **Matters for message notifications** (delivered while the app is not running). Links `SharedModules`, whose bound data pages (~14 MB dirty) put it at ~19 MB of its 24 MB limit at launch: needs the raised limit (`memlimit.m`) |
 | `PlugIns/{Notification,Share,Intents,Widget,BroadcastUpload}Extension.appex` | |
 | `Extensions/{AppMigration,NPCIPayments}Extension.appex` | ExtensionKit, iOS 26: removed |
 

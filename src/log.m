@@ -428,8 +428,9 @@ static void traceNotificationService(void) {
     method_setImplementation(m, imp_implementationWithBlock(^(id self, id request, void (^handler)(id)) {
         id content = [request valueForKey:@"content"];
         NSDictionary *info = [content valueForKey:@"userInfo"];
-        waport_log([NSString stringWithFormat:@"notification service: request %@, payload keys %@, footprint %.1f MB",
-                    [request valueForKey:@"identifier"], [[info allKeys] componentsJoinedByString:@","], footprintMB()]);
+        waport_log([NSString stringWithFormat:@"notification service: request %@, payload keys %@, footprint %.1f MB, limit %d MB",
+                    [request valueForKey:@"identifier"], [[info allKeys] componentsJoinedByString:@","], footprintMB(),
+                    waport_memlimit()]);
         logMemoryMap(@"at request");
         void (^h)(id) = handler;
         orig(self, rs, request, ^(id result) {
